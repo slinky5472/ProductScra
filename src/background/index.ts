@@ -1,32 +1,44 @@
-interface ProductInfo {
-    title: string;
-    price: string;
-    description?: string;
-    url: string;
-    site: string;
-  }
-  
-  // Store detected products
-  let detectedProducts: { [url: string]: ProductInfo } = {};
-  
-  // Listen for messages from content script
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.type === 'PRODUCT_DETECTED') {
-      const product = message.payload;
-      console.log('Product detected:', product);
-      
-      // Store the product
-      detectedProducts[product.url] = product;
-      
-      // Update extension badge
-      chrome.action.setBadgeText({
-        text: '✓',
-        tabId: sender.tab?.id
-      });
-      
-      chrome.action.setBadgeBackgroundColor({
-        color: '#10B981',
-        tabId: sender.tab?.id
-      });
+// src/background/index.ts
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === 'SCRAPE_REQUEST') {
+    console.log('Background script received request for URL:', message.url);
+    
+    // Check if tab ID exists
+    if (!sender.tab?.id) {
+      console.error('No tab ID found');
+      return;
     }
-  });
+
+    const tabId = sender.tab.id;  // Store tab ID in a constant
+    
+    fetch('http://localhost:5000/scrape', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ url: message.url })
+    })
+    .then(response => {
+      console.log('Received response:', response.status);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      return response.json();
+    })
+    .then(data => {
+      console.log('Scraped data:', data);
+      chrome.tabs.sendMessage(tabId, {
+        type: 'SCRAPE_RESPONSE',
+        payload: data
+      });
+    })
+    .catch(error => {
+      console.error('Fetch error:', error);
+      chrome.tabs.sendMessage(tabId, {
+        type: 'SCRAPE_ERROR',
+        payload: error.message
+      });
+    });
+  }
+  return true;  // Will respond asynchronously
+});

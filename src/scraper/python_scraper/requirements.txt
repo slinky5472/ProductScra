@@ -1,0 +1,15 @@
+
+# Web scraping
+selenium>=4.15.0
+beautifulsoup4>=4.12.0
+webdriver_manager>=4.0.0
+
+# Server
+flask>=2.0.0
+flask-cors>=4.0.0
+
+# HTTP requests
+requests>=2.31.0
+
+# General utilities
+python-dateutil>=2.8.2
