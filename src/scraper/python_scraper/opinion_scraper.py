@@ -1,128 +1,137 @@
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
-import time
+import requests
+from bs4 import BeautifulSoup
 import re
+import time
+from urllib.parse import quote_plus
 
 class OpinionScraper:
     def __init__(self):
-        # Set up Chrome options
-        self.chrome_options = Options()
-        self.chrome_options.add_argument("--headless")  # Run in headless mode
-        self.chrome_options.add_argument("--no-sandbox")
-        self.chrome_options.add_argument("--disable-dev-shm-usage")
+        self.headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
         
-        # Initialize the driver
-        self.driver = webdriver.Chrome(options=self.chrome_options)
-        self.driver.implicitly_wait(10)  # Set implicit wait time
-
     def clean_product_name(self, product_name):
-        # Remove brand names and common words to get better search results
-        common_words = ['amazon', 'exclusive', 'brand', 'new', 'the']
-        cleaned = ' '.join(word for word in product_name.lower().split() 
-                         if word not in common_words)
-        return re.sub(r'[^\w\s]', '', cleaned)
+        # Extract brand and main product name
+        words = product_name.split()
+        
+        # Keep only first 3-4 significant words
+        important_words = []
+        skip_words = ['the', 'with', 'and', 'for', 'from', 'by', 'in', 'on', 'at', 
+                     'to', 'of', 'new', 'brand', 'exclusive', 'amazon', 'latest',
+                     'featuring', 'includes', 'including', 'features']
+        
+        # Get brand name (usually first word)
+        if words:
+            brand = words[0]
+            important_words.append(brand)
+        
+        # Add next few significant words
+        word_count = 0
+        for word in words[1:]:
+            if word_count >= 3:  # Limit to 3 additional words after brand
+                break
+            if (len(word) > 2 and  # Skip very short words
+                word.lower() not in skip_words and
+                not word.startswith('(') and
+                not word.startswith('[')):
+                important_words.append(word)
+                word_count += 1
+        
+        # Join words and clean special characters
+        cleaned = ' '.join(important_words)
+        cleaned = re.sub(r'[^\w\s-]', '', cleaned)  # Remove special chars except hyphens
+        
+        print(f"Original name: {product_name}")
+        print(f"Cleaned name: {cleaned}")
+        
+        return cleaned
 
     def search_reddit_opinions(self, product_name):
         cleaned_name = self.clean_product_name(product_name)
-        search_url = f"https://www.reddit.com/search/?q={cleaned_name}%20review"
+        # Use Reddit's JSON API
+        search_url = f"https://www.reddit.com/search.json?q={quote_plus(cleaned_name)}+review&sort=relevance&limit=5"
         
         try:
-            self.driver.get(search_url)
+            response = requests.get(search_url, headers=self.headers)
+            response.raise_for_status()
+            data = response.json()
             
-            # Wait for posts to load
-            posts = WebDriverWait(self.driver, 10).until(
-                EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div[data-testid='post-container']"))
-            )
-
             opinions = []
-            for post in posts[:5]:  # Get first 5 posts
-                try:
-                    title = post.find_element(By.CSS_SELECTOR, "h3").text
-                    subreddit = post.find_element(By.CSS_SELECTOR, "a[data-click-id='subreddit']").text
-                    score = post.find_element(By.CSS_SELECTOR, "div[data-click-id='upvote']").text
-                    
-                    opinions.append({
-                        'title': title,
-                        'subreddit': subreddit,
-                        'score': score,
-                        'source': 'Reddit'
-                    })
-                except Exception as e:
-                    print(f"Error extracting post data: {e}")
-                    continue
-
+            for post in data['data']['children'][:5]:
+                post_data = post['data']
+                opinions.append({
+                    'title': post_data['title'],
+                    'subreddit': post_data['subreddit'],
+                    'score': str(post_data['score']),
+                    'source': 'Reddit',
+                    'url': f"https://reddit.com{post_data['permalink']}"
+                })
+                print(f"Found Reddit post: {post_data['title'][:50]}...")
+            
             return opinions
-
-        except TimeoutException:
-            print("Timeout waiting for Reddit posts to load")
-            return []
+            
         except Exception as e:
             print(f"Error searching Reddit: {e}")
             return []
 
-    def search_youtube_reviews(self, product_name):
+    def search_google_reviews(self, product_name):
         cleaned_name = self.clean_product_name(product_name)
-        search_url = f"https://www.youtube.com/results?search_query={cleaned_name}+review"
+        search_url = f"https://www.google.com/search?q={quote_plus(cleaned_name)}+review"
         
         try:
-            self.driver.get(search_url)
+            response = requests.get(search_url, headers=self.headers)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Wait for videos to load
-            videos = WebDriverWait(self.driver, 10).until(
-                EC.presence_of_all_elements_located((By.CSS_SELECTOR, "ytd-video-renderer"))
-            )
-
             reviews = []
-            for video in videos[:3]:  # Get first 3 videos
-                try:
-                    title = video.find_element(By.CSS_SELECTOR, "#video-title").text
-                    channel = video.find_element(By.CSS_SELECTOR, "#channel-name").text
-                    views = video.find_element(By.CSS_SELECTOR, "#metadata-line span").text
-                    
+            # Find review results in Google search
+            search_results = soup.select('div.g')[:3]  # Get first 3 results
+            
+            for result in search_results:
+                title_elem = result.select_one('h3')
+                link_elem = result.select_one('a')
+                snippet_elem = result.select_one('div.VwiC3b')
+                
+                if title_elem and link_elem:
                     reviews.append({
-                        'title': title,
-                        'channel': channel,
-                        'views': views,
-                        'source': 'YouTube'
+                        'title': title_elem.text,
+                        'url': link_elem['href'],
+                        'snippet': snippet_elem.text if snippet_elem else '',
+                        'source': 'Google'
                     })
-                except Exception as e:
-                    print(f"Error extracting video data: {e}")
-                    continue
-
+                    print(f"Found Google result: {title_elem.text[:50]}...")
+            
             return reviews
-
-        except TimeoutException:
-            print("Timeout waiting for YouTube videos to load")
-            return []
+            
         except Exception as e:
-            print(f"Error searching YouTube: {e}")
+            print(f"Error searching Google: {e}")
             return []
 
     def get_product_opinions(self, product_name):
         """Main method to get opinions from multiple sources"""
+        print(f"Searching opinions for: {product_name}")
         all_opinions = {
             'reddit': self.search_reddit_opinions(product_name),
-            'youtube': self.search_youtube_reviews(product_name)
+            'google': self.search_google_reviews(product_name)
         }
         return all_opinions
 
-    def close(self):
-        """Clean up the driver"""
-        if self.driver:
-            self.driver.quit()
-
-# Example usage
+# Example usage and testing
 if __name__ == "__main__":
     scraper = OpinionScraper()
     try:
-        product_name = "Sony WH-1000XM4 Headphones"  # Example product
+        # Test with a sample product
+        product_name = "Sony WH-1000XM4"
+        print(f"\nTesting scraper with product: {product_name}")
         opinions = scraper.get_product_opinions(product_name)
-        print("Reddit Opinions:", opinions['reddit'])
-        print("YouTube Reviews:", opinions['youtube'])
-    finally:
-        scraper.close()
+        
+        print("\nReddit Results:")
+        for post in opinions['reddit']:
+            print(f"- {post['title'][:50]}... (r/{post['subreddit']})")
+        
+        print("\nGoogle Results:")
+        for result in opinions['google']:
+            print(f"- {result['title'][:50]}...")
+            
+    except Exception as e:
+        print(f"Error in test: {e}")

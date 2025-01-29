@@ -28,18 +28,19 @@ interface RedditPost {
   subreddit: string;
   score: string;
   source: 'Reddit';
+  url: string;
 }
 
-interface YouTubeVideo {
+interface GoogleResult {
   title: string;
-  channel: string;
-  views: string;
-  source: 'YouTube';
+  url: string;
+  snippet: string;
+  source: 'Google';
 }
 
 interface OpinionsData {
   reddit: RedditPost[];
-  youtube: YouTubeVideo[];
+  google: GoogleResult[];
 }
 
 class ProductDetector {
@@ -128,14 +129,28 @@ class ProductDetector {
         border-top: 1px solid #bae6fd;
     `;
 
+    // Check if we have any results at all
+    if ((!opinions.reddit || opinions.reddit.length === 0) && 
+        (!opinions.google || opinions.google.length === 0)) {
+        opinionsSection.innerHTML = `
+            <div style="color: #64748b; text-align: center; padding: 12px;">
+                No reviews found for this product.
+            </div>
+        `;
+        badge.appendChild(opinionsSection);
+        return;
+    }
+
     // Display Reddit opinions
-    if (opinions.reddit.length > 0) {
+    if (opinions.reddit && opinions.reddit.length > 0) {
         const redditSection = document.createElement('div');
         redditSection.innerHTML = `
             <h3 style="color: #0369a1; margin-bottom: 8px;">Reddit Discussions</h3>
             ${opinions.reddit.map((post: RedditPost) => `
-                <div style="margin-bottom: 8px; font-size: 12px;">
-                    <div style="font-weight: bold;">${post.title}</div>
+                <div style="margin-bottom: 12px; font-size: 12px;">
+                    <a href="${post.url}" target="_blank" style="font-weight: bold; color: #0369a1; text-decoration: none;">
+                        ${post.title}
+                    </a>
                     <div style="color: #64748b;">r/${post.subreddit} • ${post.score} points</div>
                 </div>
             `).join('')}
@@ -143,41 +158,53 @@ class ProductDetector {
         opinionsSection.appendChild(redditSection);
     }
 
-    // Display YouTube reviews
-    if (opinions.youtube.length > 0) {
-        const youtubeSection = document.createElement('div');
-        youtubeSection.innerHTML = `
-            <h3 style="color: #0369a1; margin-top: 16px; margin-bottom: 8px;">YouTube Reviews</h3>
-            ${opinions.youtube.map((video: YouTubeVideo) => `
-                <div style="margin-bottom: 8px; font-size: 12px;">
-                    <div style="font-weight: bold;">${video.title}</div>
-                    <div style="color: #64748b;">${video.channel} • ${video.views}</div>
+    // Display Google results
+    if (opinions.google && opinions.google.length > 0) {
+        const googleSection = document.createElement('div');
+        googleSection.innerHTML = `
+            <h3 style="color: #0369a1; margin-top: ${opinions.reddit?.length ? '16px' : '0'}; margin-bottom: 8px;">
+                Review Articles
+            </h3>
+            ${opinions.google.map((result: GoogleResult) => `
+                <div style="margin-bottom: 12px; font-size: 12px;">
+                    <a href="${result.url}" target="_blank" style="font-weight: bold; color: #0369a1; text-decoration: none;">
+                        ${result.title}
+                    </a>
+                    ${result.snippet ? `<div style="color: #64748b; margin-top: 4px;">${result.snippet}</div>` : ''}
                 </div>
             `).join('')}
         `;
-        opinionsSection.appendChild(youtubeSection);
+        opinionsSection.appendChild(googleSection);
     }
 
     badge.appendChild(opinionsSection);
 }
 
-// Update the fetch response type
-private async fetchOpinions(productName: string): Promise<OpinionsData> {
-    const response = await fetch('http://localhost:5001/opinions', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            product_name: productName
-        })
-    });
 
-    const result = await response.json();
-    if (result.success) {
-        return result.data as OpinionsData;
-    }
-    throw new Error(result.error || 'Failed to fetch opinions');
+private async fetchOpinions(productName: string): Promise<OpinionsData> {
+  const response = await fetch('http://localhost:5001/opinions', {
+      method: 'POST',
+      headers: {
+          'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+          product_name: productName
+      })
+  });
+
+  const result = await response.json();
+  
+  if (!result.success) {
+      throw new Error(result.error || 'Failed to fetch opinions');
+  }
+  
+  // Ensure the response has the expected structure
+  const opinions: OpinionsData = {
+      reddit: Array.isArray(result.data?.reddit) ? result.data.reddit : [],
+      google: Array.isArray(result.data?.google) ? result.data.google : []
+  };
+  
+  return opinions;
 }
 
   public detectProduct(): void {
@@ -221,6 +248,20 @@ private async fetchOpinions(productName: string): Promise<OpinionsData> {
       max-width: 300px;
     `;
 
+    // Create content container
+    const contentContainer = document.createElement('div');
+    contentContainer.style.cssText = 'position: relative; padding-right: 20px;';
+    contentContainer.innerHTML = `
+        <div style="font-weight: bold; color: #0369a1; margin-bottom: 8px;">Product Detected!</div>
+        <div style="font-size: 14px; color: #0c4a6e;">
+          <div style="margin-bottom: 4px;"><strong>Title:</strong> ${productInfo.title.substring(0, 50)}...</div>
+          <div style="margin-bottom: 4px;"><strong>Price:</strong> ${productInfo.price}</div>
+          ${productInfo.rating ? `<div style="margin-bottom: 4px;"><strong>Rating:</strong> ${productInfo.rating}</div>` : ''}
+          ${productInfo.reviews ? `<div style="margin-bottom: 4px;"><strong>Reviews:</strong> ${productInfo.reviews}</div>` : ''}
+          ${productInfo.availability ? `<div style="margin-bottom: 4px;"><strong>Availability:</strong> ${productInfo.availability}</div>` : ''}
+        </div>
+    `;
+
     // Create close button
     const closeButton = document.createElement('div');
     closeButton.style.cssText = `
@@ -238,10 +279,9 @@ private async fetchOpinions(productName: string): Promise<OpinionsData> {
       border-radius: 50%;
       transition: background-color 0.2s;
     `;
-    closeButton.innerHTML = '×';  // Using × symbol for the X
-    closeButton.title = 'Close';  // Tooltip on hover
+    closeButton.innerHTML = '×';
+    closeButton.title = 'Close';
 
-    // Add hover effect
     closeButton.onmouseover = () => {
       closeButton.style.backgroundColor = '#e2e8f0';
     };
@@ -249,29 +289,46 @@ private async fetchOpinions(productName: string): Promise<OpinionsData> {
       closeButton.style.backgroundColor = 'transparent';
     };
 
-    // Add click handler to remove the badge
     closeButton.onclick = () => {
       badge.remove();
     };
 
-    badge.innerHTML = `
-      <div style="position: relative; padding-right: 20px;">
-        <div style="font-weight: bold; color: #0369a1; margin-bottom: 8px;">Product Detected!</div>
-        <div style="font-size: 14px; color: #0c4a6e;">
-          <div style="margin-bottom: 4px;"><strong>Title:</strong> ${productInfo.title.substring(0, 50)}...</div>
-          <div style="margin-bottom: 4px;"><strong>Price:</strong> ${productInfo.price}</div>
-          ${productInfo.rating ? `<div style="margin-bottom: 4px;"><strong>Rating:</strong> ${productInfo.rating}</div>` : ''}
-          ${productInfo.reviews ? `<div style="margin-bottom: 4px;"><strong>Reviews:</strong> ${productInfo.reviews}</div>` : ''}
-          ${productInfo.availability ? `<div style="margin-bottom: 4px;"><strong>Availability:</strong> ${productInfo.availability}</div>` : ''}
-        </div>
-      </div>
+    // Create opinions button
+    const opinionsButton = document.createElement('button');
+    opinionsButton.style.cssText = `
+        margin-top: 12px;
+        padding: 8px 16px;
+        background: #0ea5e9;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+        transition: background-color 0.2s;
     `;
+    opinionsButton.textContent = 'Load Reviews & Opinions';
+    opinionsButton.onclick = async () => {
+        opinionsButton.textContent = 'Loading...';
+        opinionsButton.disabled = true;
 
-    // Add close button to the badge
+        try {
+            const opinions = await this.fetchOpinions(productInfo.title);
+            this.displayOpinions(opinions, badge);
+            opinionsButton.textContent = 'Load Reviews & Opinions';
+            opinionsButton.disabled = false;
+        } catch (error) {
+            console.error('Error fetching opinions:', error);
+            opinionsButton.textContent = 'Error Loading Opinions';
+        }
+    };
+
+    // Append everything to the badge in the correct order
     badge.appendChild(closeButton);
-    document.body.appendChild(badge);
-
+    badge.appendChild(contentContainer);
+    badge.appendChild(opinionsButton);
     
+    // Add the badge to the document
+    document.body.appendChild(badge);
 }
 }
 
